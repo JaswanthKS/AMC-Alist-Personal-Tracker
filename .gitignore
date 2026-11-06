@@ -1,0 +1,10 @@
+*.aab
+*.apk
+*.iml
+.gradle
+.idea
+/app/build
+/build
+keystore.properties
+local.properties
+upload-keystore.jks
