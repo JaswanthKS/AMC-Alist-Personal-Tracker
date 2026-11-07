@@ -15,6 +15,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -202,11 +203,27 @@ fun AppRoot(vm: MainVM) {
 fun LogScreen(title: String, subtitle: String, movies: List<Movie>, watch: List<com.alisttracker.data.WatchItem>, vm: MainVM, onLogWatch: (com.alisttracker.data.WatchItem) -> Unit, onClick: (Movie) -> Unit) {
     var query by remember { mutableStateOf("") }
     var scope by remember { mutableStateOf(0) }   // 0 = AMC, 1 = other theaters, 2 = watchlist
+    var fFormat by remember { mutableStateOf<String?>(null) }
+    var fYear by remember { mutableStateOf<String?>(null) }
+    var f3d by remember { mutableStateOf(false) }
+    var fRating by remember { mutableStateOf<Int?>(null) }   // null = any, 0 = unrated, 1..5 = exactly that many stars
+    var fLang by remember { mutableStateOf<String?>(null) }
+    var fAlist by remember { mutableStateOf<String?>(null) }   // Yes / Gift Card / Voucher / No
+    var showFilters by remember { mutableStateOf(false) }
     val amcCount = movies.count { it.amc }
     val scoped = remember(movies, scope) { movies.filter { it.amc == (scope == 0) } }
     val sorted = remember(scoped) { scoped.latestFirst() }
     val exactFormat = remember(sorted, query) { sorted.map { it.format }.firstOrNull { it.equals(query.trim(), true) } }
+    val formatChoices = remember(sorted) { sorted.groupingBy { it.format.ifBlank { "Standard" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
+    val langChoices = remember(sorted) { sorted.groupingBy { it.language.ifBlank { "English" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
+    val yearChoices = remember(sorted) { sorted.map { it.date.take(4) }.distinct().sortedDescending() }
+    val filterCount = listOfNotNull(fFormat, fYear, fRating, fLang, fAlist).size + (if (f3d) 1 else 0)
+    val filtersOn = filterCount > 0
     val list = sorted.filter {
+        (fFormat == null || it.format.ifBlank { "Standard" } == fFormat) && (fYear == null || it.date.startsWith(fYear!!)) &&
+        (!f3d || it.threeD) && (fRating == null || it.rating == fRating) &&
+        (fLang == null || it.language.ifBlank { "English" } == fLang) && (fAlist == null || it.alist == fAlist)
+    }.filter {
         query.isBlank() || (it.threeD && query.trim().equals("3d", true)) || it.title.contains(query, true) || it.theater.contains(query, true) ||
             (if (exactFormat != null) it.format.equals(exactFormat, true) else it.format.contains(query, true))
     }
@@ -236,8 +253,17 @@ fun LogScreen(title: String, subtitle: String, movies: List<Movie>, watch: List<
                     focusedBorderColor = Red, unfocusedBorderColor = Surface2),
                 modifier = Modifier.fillMaxWidth()
             )
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilterTag(if (filtersOn) "Filters · $filterCount  ▾" else "Filters  ▾", filtersOn) { showFilters = true }
+                if (filtersOn) Text("Clear", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Red,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).clickable { fFormat = null; fYear = null; f3d = false; fRating = null; fLang = null; fAlist = null }.padding(horizontal = 8.dp, vertical = 6.dp))
+            }
+            if (filtersOn || query.isNotBlank()) Text("${list.size} of ${sorted.size} shown", fontSize = 12.sp, color = Muted, modifier = Modifier.padding(top = 6.dp))
             }
         }
+        if (showFilters) FiltersDialog(fRating, yearChoices, fYear, formatChoices, fFormat, f3d, langChoices, fLang, fAlist,
+            { fRating = it }, { fYear = it }, { fFormat = it }, { f3d = it }, { fLang = it }, { fAlist = it }, { fFormat = null; fYear = null; f3d = false; fRating = null; fLang = null; fAlist = null }, { showFilters = false })
         if (scope == 2) WatchlistPane(watch, vm, onLogWatch) else
         LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             grouped.forEach { (month, items) ->
@@ -302,6 +328,7 @@ fun MovieRow(m: Movie, onClick: () -> Unit) {
             })
             Column(Modifier.width(92.dp).padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Text(money(m.total), fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color.White)
+                if (m.rating > 0) Text("★".repeat(m.rating), fontSize = 12.sp, color = Gold, modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
@@ -362,6 +389,49 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Tile("Out of pocket", money(s.outOfPocket), Orange, Modifier.weight(1f))
             Tile("Gift card + voucher", "${s.giftCardMovies + s.voucherMovies}", Teal, Modifier.weight(1f))
+        }
+
+        val cs = remember(movies) { concessionStats(movies) }
+        if (cs.visits > 0) {
+            Section("Concessions & true cost", Orange) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Tile("Popcorn & drinks", money(cs.total), Orange, Modifier.weight(1f))
+                    Tile("Avg per visit", money(cs.total / cs.visits), Gold, Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(8.dp))
+                cs.byPay.forEach { (k, v) ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                        Text(k, color = Color.White, modifier = Modifier.weight(1f))
+                        Text(money(v), color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                val trueCost = s.subsPaid + s.outOfPocket + cs.cashOut
+                Text("True total cost: ${money(trueCost)}", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                Text("Membership + tickets you paid for + concessions paid with cash or card (rewards and gift cards left out).", color = Muted, fontSize = 12.sp)
+            }
+        }
+
+        run {
+            val now = LocalDate.now()
+            val ms = monthSummary(movies, subs, now.year, now.monthValue)
+            val (won, total) = monthsPaidOff(movies, subs)
+            Section("This month", Green) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Tile("A-List visits", ms.visits.toString(), Red, Modifier.weight(1f))
+                    Tile("Free tickets", money(ms.value), Green, Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    when {
+                        ms.cost <= 0 -> "Add this month's membership payment to see if it paid off."
+                        ms.paidOff -> "Paid for itself — ${money(ms.net)} ahead of the ${money(ms.cost)} membership."
+                        else -> "${money(ms.cost - ms.value)} of tickets to go to cover the ${money(ms.cost)} membership."
+                    }, color = if (ms.paidOff) Green else Color(0xFFD7D8E6), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                if (total > 0) Text("$won of $total paid months earned back their membership", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                val wk = visitsLast7Days(movies)
+                Text("Last 7 days: $wk of 3 A-List movies used", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+            }
         }
 
         val other = movies.filter { !it.amc }
@@ -574,6 +644,9 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
     var notes by remember { mutableStateOf(initial?.notes ?: "") }
     var swag by remember { mutableStateOf(initial?.swag ?: "") }
     var amc by remember { mutableStateOf(initial?.amc ?: true) }
+    var rating by remember { mutableStateOf(initial?.rating ?: 0) }
+    var concessions by remember { mutableStateOf(initial?.concessions?.takeIf { it > 0 }?.let { String.format(Locale.US, "%.2f", it) } ?: "") }
+    var concPay by remember { mutableStateOf(initial?.concessionsPay ?: "") }
     var showPicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
 
@@ -614,6 +687,12 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
                 }
                 Choice("A-List", alist, listOf("Yes", "No", "Gift Card", "Voucher")) { alist = it }
                 Choice("Swag / freebies", swag, swagOpts) { swag = it }
+                OutlinedTextField(concessions, { concessions = it }, label = { Text("Concessions \$ (popcorn, drinks)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if ((concessions.toDoubleOrNull() ?: 0.0) > 0) Choice("Paid with", concPay, listOf("Cash", "Credit Card", "Rewards", "Gift Card", "Other")) { concPay = it }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Rating", color = Muted, fontSize = 14.sp, modifier = Modifier.width(64.dp))
+                    StarRating(rating, size = 30.dp) { rating = it }
+                }
                 OutlinedTextField(notes, { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(amc, { amc = it }); Text("AMC theater (counts toward A-List stats)")
@@ -630,7 +709,9 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
                     ticket = ticket.toDoubleOrNull() ?: 0.0, fee = fee.toDoubleOrNull() ?: 0.0,
                     format = format, language = language, theater = theater,
                     screen = screen.toIntOrNull(), showtime = showtime, alist = alist, threeD = threeD,
-                    notes = notes, swag = swag, amc = amc,
+                    notes = notes, swag = swag, amc = amc, rating = rating,
+                    concessions = (concessions.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0),
+                    concessionsPay = if ((concessions.toDoubleOrNull() ?: 0.0) > 0) concPay else "",
                     posterPath = if (initial != null && initial.title == title.trim()) initial.posterPath else ""))
             }) { Text("Save") }
         },
@@ -741,4 +822,58 @@ fun BoxScope.FloatingChrome(nav: NavState, tab: Int, tabs: List<Pair<String, and
             }
 
 
+}
+
+@Composable
+private fun FilterDropdown(label: String, value: String, options: List<String>, onPick: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = Muted, fontSize = 14.sp, modifier = Modifier.width(76.dp))
+        Box(Modifier.weight(1f)) {
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Surface2).clickable { open = true }.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(value, color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                Icon(Icons.Default.KeyboardArrowDown, null, tint = Muted)
+            }
+            DropdownMenu(open, { open = false }) {
+                options.forEachIndexed { i, o -> DropdownMenuItem(text = { Text(o) }, onClick = { onPick(i); open = false }) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FiltersDialog(
+    ratingNow: Int?, years: List<String>, yearNow: String?, formats: List<String>, formatNow: String?, threeD: Boolean,
+    langs: List<String>, langNow: String?, alistNow: String?,
+    onRating: (Int?) -> Unit, onYear: (String?) -> Unit, onFormat: (String?) -> Unit, on3D: (Boolean) -> Unit, onLang: (String?) -> Unit, onAlist: (String?) -> Unit, onClear: () -> Unit, onDone: () -> Unit
+) {
+    val ratingOpts = listOf("Any rating", "0 · Unrated", "1 ★", "2 ★★", "3 ★★★", "4 ★★★★", "5 ★★★★★")
+    val yearOpts = listOf("All years") + years
+    val formatOpts = listOf("All formats") + formats
+    val langOpts = listOf("All languages") + langs
+    val alistValues = listOf("Yes", "Gift Card", "Voucher", "No")
+    val alistOpts = listOf("All tickets", "A-List", "Gift Card", "Voucher", "No A-List")
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("Filters") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FilterDropdown("Rating", ratingOpts[if (ratingNow == null) 0 else ratingNow + 1], ratingOpts) { onRating(if (it == 0) null else it - 1) }
+                FilterDropdown("Year", yearNow ?: yearOpts[0], yearOpts) { onYear(if (it == 0) null else years[it - 1]) }
+                FilterDropdown("Format", formatNow ?: formatOpts[0], formatOpts) { onFormat(if (it == 0) null else formats[it - 1]) }
+                FilterDropdown("Language", langNow ?: langOpts[0], langOpts) { onLang(if (it == 0) null else langs[it - 1]) }
+                FilterDropdown("Ticket", alistNow?.let { alistOpts[alistValues.indexOf(it) + 1] } ?: alistOpts[0], alistOpts) { onAlist(if (it == 0) null else alistValues[it - 1]) }
+                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(threeD, on3D); Text("Watched in 3D") }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDone) { Text("Done") } },
+        dismissButton = { TextButton(onClick = onClear) { Text("Clear all", color = Red) } }
+    )
+}
+
+@Composable
+private fun FilterTag(label: String, on: Boolean, onClick: () -> Unit) {
+    Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (on) Color.White else Color(0xFFD7D8E6),
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) Red else Surface2).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 6.dp))
 }

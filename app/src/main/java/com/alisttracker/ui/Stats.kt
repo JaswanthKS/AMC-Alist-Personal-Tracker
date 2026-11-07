@@ -56,3 +56,38 @@ fun computeStats(all: List<Movie>, subs: List<SubPayment>, theaters: List<String
         perMonth = perMonth
     )
 }
+
+/** One month's A-List numbers: value of free tickets vs what the membership cost that month. */
+data class MonthSummary(val visits: Int, val value: Double, val cost: Double) {
+    val net: Double get() = value - cost
+    val paidOff: Boolean get() = cost > 0 && value >= cost
+}
+
+fun monthSummary(all: List<Movie>, subs: List<SubPayment>, year: Int, month: Int): MonthSummary {
+    val prefix = String.format(java.util.Locale.US, "%04d-%02d", year, month)
+    val yes = all.filter { it.amc && it.alist == "Yes" && it.date.startsWith(prefix) }
+    return MonthSummary(yes.size, yes.sumOf { it.total }, subs.filter { it.year == year && it.month == month }.sumOf { it.amount })
+}
+
+/** A-List visits in the last 7 days (today included). */
+fun visitsLast7Days(all: List<Movie>, today: java.time.LocalDate = java.time.LocalDate.now()): Int {
+    val from = today.minusDays(6).toString(); val to = today.toString()
+    return all.count { it.amc && it.alist == "Yes" && it.date >= from && it.date <= to }
+}
+
+/** How many months with a payment recorded earned back at least what the membership cost. */
+fun monthsPaidOff(all: List<Movie>, subs: List<SubPayment>): Pair<Int, Int> {
+    val paid = subs.filter { it.amount > 0 }
+    return paid.count { monthSummary(all, subs, it.year, it.month).paidOff } to paid.size
+}
+
+/** Popcorn-and-drinks spend across all visits, split by how it was paid. */
+data class ConcessionStats(val total: Double, val visits: Int, val byPay: List<Pair<String, Double>>, val cashOut: Double)
+
+fun concessionStats(all: List<Movie>): ConcessionStats {
+    val withSpend = all.filter { it.concessions > 0 }
+    val byPay = withSpend.groupBy { it.concessionsPay.ifBlank { "Not set" } }.map { (k, v) -> k to v.sumOf { it.concessions } }.sortedByDescending { it.second }
+    // "Rewards" and "Gift Card" didn't come out of pocket on the day, so they are kept out of the true cost.
+    val cashOut = withSpend.filter { it.concessionsPay != "Rewards" && it.concessionsPay != "Gift Card" }.sumOf { it.concessions }
+    return ConcessionStats(withSpend.sumOf { it.concessions }, withSpend.size, byPay, cashOut)
+}

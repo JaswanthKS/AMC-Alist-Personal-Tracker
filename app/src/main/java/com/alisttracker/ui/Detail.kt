@@ -168,6 +168,15 @@ fun MovieDetailScreen(m: Movie, vm: MainVM, onBack: () -> Unit, onEdit: () -> Un
                     }
                 }
 
+                // your rating
+                Section("Your rating", Gold) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StarRating(m.rating, size = 38.dp) { r -> vm.save(m.copy(rating = if (r == m.rating) 0 else r)) }
+                        Spacer(Modifier.width(12.dp))
+                        Text(if (m.rating > 0) "${m.rating} / 5" else "Tap to rate", color = Muted, fontSize = 13.sp)
+                    }
+                }
+
                 // your visit (the spreadsheet data)
                 Section("Your visit", accent) {
                     val whenText = listOfNotNull(prettyDate(m.date), m.showtime.ifBlank { null }?.let { prettyTime(it) }).joinToString(" · ")
@@ -181,6 +190,7 @@ fun MovieDetailScreen(m: Movie, vm: MainVM, onBack: () -> Unit, onEdit: () -> Un
                     DetailRow("Total value", money(m.total))
                     DetailRow("A-List", if (m.alist == "No") "Paid" else m.alist, aListColor(m.alist))
                     DetailRow("Swag", m.swag)
+                    if (m.concessions > 0) DetailRow("Concessions", money(m.concessions) + if (m.concessionsPay.isNotBlank()) " · ${m.concessionsPay}" else "")
                     DetailRow("Notes", m.notes)
                     if (!m.amc) DetailRow("Counts toward A-List", "No (other theater)")
                 }
@@ -217,5 +227,18 @@ private fun DetailRow(label: String, value: String, valueColor: Color = Color.Wh
     Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.Top) {
         Text(label, color = Muted, fontSize = 13.sp, modifier = Modifier.width(130.dp))
         Text(value, color = valueColor, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+    }
+}
+
+/** Tappable 1-5 star row. Tapping the current rating again clears it (the caller decides). */
+@Composable
+fun StarRating(rating: Int, size: androidx.compose.ui.unit.Dp = 32.dp, onChange: (Int) -> Unit) {
+    Row {
+        for (i in 1..5) {
+            Icon(
+                if (i <= rating) Icons.Default.Star else Icons.Default.StarBorder, "$i stars",
+                tint = if (i <= rating) Gold else Muted,
+                modifier = Modifier.size(size).clip(CircleShape).clickable { onChange(if (i == rating) 0 else i) }.padding(2.dp))
+        }
     }
 }

@@ -133,10 +133,7 @@ fun RewindScreen(movies: List<Movie>, subs: List<SubPayment>, vm: MainVM, grad: 
         // everything below is what gets captured as the shared image
         Column(
             Modifier.fillMaxWidth().heightIn(min = minBody)
-                .drawWithContent {
-                    layer.record { this@drawWithContent.drawContent() }
-                    drawLayer(layer)
-                }
+                .drawWithContent { layer.record { this@drawWithContent.drawContent() }; drawLayer(layer) }
                 .background(Brush.verticalGradient(grad))
                 .padding(horizontal = 16.dp, vertical = 16.dp)
         ) {

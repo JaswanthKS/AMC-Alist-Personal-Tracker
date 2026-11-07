@@ -22,7 +22,10 @@ data class Movie(
     val swag: String = "",
     val amc: Boolean = true,
     @ColumnInfo(defaultValue = "0") val threeD: Boolean = false,
-    @ColumnInfo(defaultValue = "''") val posterPath: String = ""
+    @ColumnInfo(defaultValue = "''") val posterPath: String = "",
+    @ColumnInfo(defaultValue = "0") val rating: Int = 0,   // 0 = not rated, 1..5 stars
+    @ColumnInfo(defaultValue = "0") val concessions: Double = 0.0,   // popcorn / drinks spend for this visit
+    @ColumnInfo(defaultValue = "''") val concessionsPay: String = ""   // Cash / Credit Card / Rewards / Gift Card / Other
 ) {
     val total: Double get() = ticket + fee
 }
@@ -61,6 +64,9 @@ interface AppDao {
 
     @Query("SELECT * FROM subs ORDER BY year, month")
     fun subs(): Flow<List<SubPayment>>
+
+    @Query("SELECT * FROM subs")
+    suspend fun allSubs(): List<SubPayment>
 
     @Query("SELECT COUNT(*) FROM movies")
     suspend fun movieCount(): Int
@@ -147,7 +153,7 @@ interface AppDao {
     suspend fun deleteOption(o: Option)
 }
 
-@Database(entities = [Movie::class, SubPayment::class, Option::class, MovieInfo::class, WatchItem::class], version = 7, exportSchema = false)
+@Database(entities = [Movie::class, SubPayment::class, Option::class, MovieInfo::class, WatchItem::class], version = 9, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): AppDao
 
@@ -155,7 +161,7 @@ abstract class AppDb : RoomDatabase() {
         @Volatile private var inst: AppDb? = null
         fun get(ctx: Context): AppDb = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(ctx.applicationContext, AppDb::class.java, "alist.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .build().also { inst = it }
         }
     }
@@ -176,6 +182,21 @@ val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
 val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
     override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `movie_info` (`title` TEXT NOT NULL, `json` TEXT NOT NULL, `fetchedAt` INTEGER NOT NULL, PRIMARY KEY(`title`))")
+    }
+}
+
+/** Concessions spend and how it was paid. */
+val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `movies` ADD COLUMN `concessions` REAL NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE `movies` ADD COLUMN `concessionsPay` TEXT NOT NULL DEFAULT ''")
+    }
+}
+
+/** Star rating on each visit. */
+val MIGRATION_7_8 = object : androidx.room.migration.Migration(7, 8) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `movies` ADD COLUMN `rating` INTEGER NOT NULL DEFAULT 0")
     }
 }
 

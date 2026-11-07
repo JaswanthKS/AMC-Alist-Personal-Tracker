@@ -37,6 +37,17 @@ function doPost(e) {
     o3.insertCheckboxes();
     log.getRange(2, 15, n, 1).setValues(d.movies.map(m => [m.threeD === true]));
 
+    // Rating (P), Concessions (Q) and Paid with (R). Each is only written if its header is ours (or the column is empty),
+    // so anything you keep in those columns is never overwritten.
+    if (ensureHeader(log, 16, 'Rating', 70)) {
+      log.getRange(2, 16, last - 1, 1).clearContent();
+      log.getRange(2, 16, n, 1).setValues(d.movies.map(m => [m.rating > 0 ? m.rating : '']));
+    }
+    if (ensureHeader(log, 17, 'Concessions', 95) && ensureHeader(log, 18, 'Paid with', 100)) {
+      log.getRange(2, 17, last - 1, 2).clearContent();
+      log.getRange(2, 17, n, 2).setValues(d.movies.map(m => [m.concessions > 0 ? m.concessions : '', m.concessionsPay || '']));
+    }
+
     // ---- Other Theatres: A, C, D, E, F, G (B "Day" keeps its formula) ----
     const oth = ss.getSheetByName('Other Theatres');
     if (oth) {
@@ -65,6 +76,19 @@ function doPost(e) {
   }
 }
 
+// True if column [col] has our header (creating it first when the column is completely empty). False = leave the column alone.
+function ensureHeader(log, col, name, width) {
+  const cell = log.getRange(1, col);
+  const cur = String(cell.getValue()).trim();
+  if (cur === name) return true;
+  if (cur !== '') return false;
+  const rows = Math.max(log.getLastRow() - 1, 1);
+  if (log.getRange(2, col, rows, 1).getValues().some(r => String(r[0]).trim() !== '')) return false;
+  log.getRange(1, 14).copyTo(cell, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  cell.setValue(name);
+  log.setColumnWidth(col, width);
+  return true;
+}
 function toDate(s) { return Utilities.parseDate(String(s), SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone(), 'yyyy-MM-dd'); }
 function toTime(s) { if (!s) return ''; const p = String(s).split(':'); return ((+p[0]) * 60 + (+p[1])) / 1440; }
 function out(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
@@ -74,7 +98,7 @@ function pullData(ss) {
   const tz = ss.getSpreadsheetTimeZone();
   const log = ss.getSheetByName('Movie Log');
   const n = Math.max(log.getLastRow() - 1, 1);
-  const rng = log.getRange(2, 1, n, 15);
+  const rng = log.getRange(2, 1, n, 18);
   const vals = rng.getValues(), disp = rng.getDisplayValues();
   const movies = [];
   vals.forEach((r, i) => {
@@ -83,7 +107,9 @@ function pullData(ss) {
     movies.push({ date: date, title: title, ticket: num(r[3]), fee: num(r[4]), format: str(r[6]), language: str(r[7]),
       theater: str(r[8]), screen: r[9] === '' ? '' : num(r[9]), showtime: parseTime(disp[i][10]),
       alist: str(r[11]), notes: str(r[12]), swag: str(r[13]),
-      threeD: r[14] === true || /^(true|yes|3d)$/i.test(str(r[14])) });
+      threeD: r[14] === true || /^(true|yes|3d)$/i.test(str(r[14])),
+      rating: Math.max(0, Math.min(5, Math.round(num(r[15])))),
+      concessions: num(r[16]), concessionsPay: str(r[17]) });
   });
   const other = [];
   const oth = ss.getSheetByName('Other Theatres');
@@ -105,7 +131,10 @@ function pullData(ss) {
       for (let m = 1; m <= 12; m++) { const a = num(row[m]); if (a > 0) subs.push({ year: y, month: m, amount: a }); }
     });
   }
-  return { ok: true, movies: movies, other: other, subs: subs };
+  // hasRating tells the app these columns exist and are ours, so their values (including blanks) can be trusted.
+  const hasRating = String(log.getRange(1, 16).getValue()).trim() === 'Rating' && String(log.getRange(1, 17).getValue()).trim() === 'Concessions' &&
+    String(log.getRange(1, 18).getValue()).trim() === 'Paid with';
+  return { ok: true, hasRating: hasRating, movies: movies, other: other, subs: subs };
 }
 function str(v) { return v === null || v === undefined ? '' : String(v).trim(); }
 function num(v) { if (typeof v === 'number') return v; const x = parseFloat(String(v).replace(/[$,]/g, '')); return isNaN(x) ? 0 : x; }
@@ -122,3 +151,4 @@ function parseTime(s) {
   if (ap === 'am' && h === 12) h = 0;
   return ('0' + h).slice(-2) + ':' + m[2];
 }
+

@@ -86,7 +86,8 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 put("id", m.id); put("date", m.date); put("title", m.title); put("ticket", m.ticket); put("fee", m.fee)
                 put("format", m.format); put("threeD", m.threeD); put("language", m.language); put("theater", m.theater)
                 put("screen", m.screen ?: org.json.JSONObject.NULL); put("showtime", m.showtime); put("alist", m.alist)
-                put("notes", m.notes); put("swag", m.swag); put("amc", m.amc); put("posterPath", m.posterPath)
+                put("notes", m.notes); put("swag", m.swag); put("amc", m.amc); put("posterPath", m.posterPath); put("rating", m.rating)
+                put("concessions", m.concessions); put("concessionsPay", m.concessionsPay)
             }) } })
         root.put("subs", org.json.JSONArray().also { arr -> subs.value.forEach { s ->
             arr.put(org.json.JSONObject().apply { put("year", s.year); put("month", s.month); put("amount", s.amount) }) } })
@@ -184,7 +185,8 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         if (m.amc) "A|${m.date}|${m.title.trim().lowercase()}|${normTime(m.showtime)}" else "O|${m.date}|${m.title.trim().lowercase()}"
     private fun canon(m: Movie) =
         (if (m.amc) listOf(m.date, m.title.trim(), m2s(m.ticket), m2s(m.fee), m.format.trim(), if (m.threeD) "3D" else "", m.language.trim(), m.theater.trim(),
-            m.screen?.toString() ?: "", normTime(m.showtime), m.alist.trim(), m.notes.trim(), m.swag.trim())
+            m.screen?.toString() ?: "", normTime(m.showtime), m.alist.trim(), m.notes.trim(), m.swag.trim()) + (if (m.rating > 0) listOf("r${m.rating}") else emptyList()) +
+            (if (m.concessions > 0) listOf("c${m2s(m.concessions)}${m.concessionsPay.trim()}") else emptyList())
          else listOf(m.date, m.title.trim(), m2s(m.total), sheetFmt(m).trim(), m.theater.trim(), m.notes.trim())).joinToString("\u0001")
 
     private fun loadSnapshot(): Map<String, String> {
@@ -269,16 +271,22 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                     format = baseFmt(j.optString("format")), threeD = j.optBoolean("threeD", false) || is3dText(j.optString("format")), language = j.optString("language").ifBlank { "English" },
                     theater = j.optString("theater"), screen = j.optString("screen").toDoubleOrNull()?.toInt(),
                     showtime = normTime(j.optString("showtime")), alist = j.optString("alist").ifBlank { "No" },
-                    notes = j.optString("notes"), swag = j.optString("swag"), amc = true)
+                    notes = j.optString("notes"), swag = j.optString("swag"), amc = true, rating = j.optInt("rating", 0).coerceIn(0, 5),
+                    concessions = j.optDouble("concessions", 0.0).coerceAtLeast(0.0), concessionsPay = j.optString("concessionsPay"))
                 else Movie(date = date, title = title, ticket = j.optDouble("price", 0.0), fee = 0.0,
                     format = baseFmt(j.optString("format")), threeD = is3dText(j.optString("format")), theater = j.optString("theater"),
                     notes = j.optString("notes"), alist = "No", amc = false)
             }
         }
+        val sheetHasRating = root.optBoolean("hasRating", false)   // false = the sheet script is the older version without a Rating column
         val sheetRows = rows("movies", true) + rows("other", false)
         if (replace) {
             if (sheetRows.isEmpty()) return@withContext "The sheet returned no movies, so nothing was changed"
-            dao.deleteAllMovies(); dao.upsertAll(sheetRows)
+            val keepExtra = dao.allMovies().filter { it.rating > 0 || it.concessions > 0 }.associateBy { keyOf(it) }
+            dao.deleteAllMovies(); dao.upsertAll(sheetRows.map { r ->
+                val k = keepExtra[keyOf(r)]
+                if (k == null || (r.amc && sheetHasRating)) r else r.copy(rating = k.rating, concessions = k.concessions, concessionsPay = k.concessionsPay)   // old sheet script: keep what is on the phone
+            })
             val ss = root.optJSONArray("subs")
             if (ss != null) {
                 dao.deleteAllSubs()
@@ -298,8 +306,9 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         val sheetMap = sheetRows.associateBy { keyOf(it) }
         val snap = loadSnapshot()
         val toAdd = mutableListOf<Movie>(); val toUpdate = mutableListOf<Movie>(); val toDelete = mutableListOf<Movie>()
-        for ((k, sm) in sheetMap) {
+        for ((k, sm0) in sheetMap) {
             val am = appMap[k]
+            val sm = if (!sheetHasRating && am != null) sm0.copy(rating = am.rating, concessions = am.concessions, concessionsPay = am.concessionsPay) else sm0
             if (am != null) {
                 if (canon(am) != canon(sm) && snap[k] == canon(am))   // app untouched since last sync -> sheet wins
                     toUpdate += if (am.amc) sm.copy(id = am.id, posterPath = am.posterPath)
@@ -354,7 +363,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 put("date", m.date); put("title", m.title); put("ticket", m.ticket); put("fee", m.fee)
                 put("format", m.format); put("threeD", m.threeD); put("language", m.language); put("theater", m.theater)
                 put("screen", m.screen ?: ""); put("showtime", m.showtime); put("alist", m.alist)
-                put("notes", m.notes); put("swag", m.swag)
+                put("notes", m.notes); put("swag", m.swag); put("rating", m.rating); put("concessions", m.concessions); put("concessionsPay", m.concessionsPay)
             }) } })
         root.put("other", org.json.JSONArray().also { arr -> all.filter { !it.amc }.forEach { m ->
             arr.put(org.json.JSONObject().apply {
@@ -396,7 +405,8 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 theater = j.optString("theater", ""), screen = if (j.isNull("screen")) null else j.optInt("screen"),
                 showtime = j.optString("showtime", ""), alist = j.optString("alist", "Yes"),
                 notes = j.optString("notes", ""), swag = j.optString("swag", ""), amc = j.optBoolean("amc", true),
-                posterPath = j.optString("posterPath", ""))
+                posterPath = j.optString("posterPath", ""), rating = j.optInt("rating", 0),
+                concessions = j.optDouble("concessions", 0.0), concessionsPay = j.optString("concessionsPay", ""))
         } }
         val ss = root.getJSONArray("subs").let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { SubPayment(it.getInt("year"), it.getInt("month"), it.getDouble("amount")) } }
         val os = root.getJSONArray("options").let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { Option(it.getString("type"), it.getString("value"), it.optInt("sortOrder")) } }
@@ -435,6 +445,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
 
     fun save(m: Movie) = viewModelScope.launch {
         dao.upsert(m)
+        MonthWidget.refresh(getApplication())
         // anything newly typed in the form becomes part of the lists
         listOf(OptType.THEATER to m.theater, OptType.FORMAT to m.format, OptType.LANGUAGE to m.language, OptType.SWAG to m.swag)
             .filter { it.second.isNotBlank() }
@@ -443,8 +454,8 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     }
     fun addOption(type: String, value: String) = viewModelScope.launch { dao.addOption(Option(type, value, 999)) }
     fun deleteOption(o: Option) = viewModelScope.launch { dao.deleteOption(o) }
-    fun delete(m: Movie) = viewModelScope.launch { dao.delete(m) }
-    fun saveSub(s: SubPayment) = viewModelScope.launch { dao.upsertSub(s) }
+    fun delete(m: Movie) = viewModelScope.launch { dao.delete(m); MonthWidget.refresh(getApplication()) }
+    fun saveSub(s: SubPayment) = viewModelScope.launch { dao.upsertSub(s); MonthWidget.refresh(getApplication()) }
 }
 
 class MainActivity : ComponentActivity() {

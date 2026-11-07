@@ -25,8 +25,8 @@ android {
         applicationId = "com.alisttracker"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
         buildConfigField("String", "TMDB_TOKEN", "\"${localProps.getProperty("TMDB_TOKEN", "")}\"")
     }
     signingConfigs {
@@ -40,7 +40,14 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Dev build installs next to the Play version with its own data.
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            manifestPlaceholders["appLabel"] = "A-List DEV"
+        }
         release {
+            manifestPlaceholders["appLabel"] = "A-List Tracker"
             isMinifyEnabled = false
             if (keyProps.getProperty("storeFile") != null) signingConfig = signingConfigs.getByName("release")
         }
