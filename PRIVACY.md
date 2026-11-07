@@ -12,13 +12,13 @@ A-List Tracker ("the app") is a personal movie-visit tracker. This policy explai
 
 ## Data stored on your device
 
-The app stores the movie visits you enter (title, date, theater, format, price and notes), your watchlist, your membership payment amounts and your app settings. This data stays on your device unless you choose to back it up, export it or sync it as described below.
+The app stores the movie visits you enter (title, date, theater, format, price, notes, star rating and concession spend), your watchlist, your membership payment amounts and your app settings. This data stays on your device unless you choose to back it up, export it or sync it as described below. The optional home screen widget shows a summary of this data on your home screen and does not send it anywhere.
 
 ## Third-party services
 
 **TMDB (The Movie Database).** To show posters, cast and movie details, the app sends movie titles and release years to the TMDB API and downloads images from TMDB. No account details or personal information are sent. TMDB's privacy policy applies to its service. This product uses the TMDB API but is not endorsed or certified by TMDB.
 
-**Google Sheets sync (optional).** If you turn this on, the app sends your visit data to a Google Apps Script web app that **you** created and own, using a link and secret code that **you** enter. The data goes to your own Google account. The developer never receives it. Google's privacy policy applies to your Google account.
+**Google Sheets sync (optional).** If you turn this on, the app sends your visit data (including ratings and concession spend) to a Google Apps Script web app that **you** created and own, using a link and secret code that **you** enter. The data goes to your own Google account. The developer never receives it. Google's privacy policy applies to your Google account.
 
 ## Backups and exports
 
