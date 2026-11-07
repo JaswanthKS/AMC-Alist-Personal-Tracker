@@ -199,6 +199,10 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         sheetPrefs.edit().putString("sync_snapshot", j.toString()).apply()
     }
 
+    /** The sync link must be https:// (Apps Script links always are). Returns a message if it isn't, otherwise null. */
+    private fun linkProblem(url: String): String? =
+        if (url.trim().startsWith("https://", ignoreCase = true)) null else "The web app link must start with https://"
+
     private fun postJson(url: String, text: String): String {
         val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
         c.requestMethod = "POST"; c.doOutput = true; c.connectTimeout = 20000; c.readTimeout = 60000
@@ -255,6 +259,8 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     private suspend fun pullFromSheet(replace: Boolean = false): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val url = syncUrl()
         if (url.isBlank()) return@withContext "Set up Google Sheets sync in Settings first"
+        val badLink = linkProblem(url)
+        if (badLink != null) return@withContext badLink
         val body = postJson(url, org.json.JSONObject().put("token", syncSecret()).put("action", "pull").toString())
         if (body.contains("bad token")) return@withContext "Wrong secret code"
         val root = runCatching { org.json.JSONObject(body) }.getOrNull()
@@ -350,6 +356,8 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     private suspend fun pushToSheet(force: Boolean = false) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val url = syncUrl()
         if (url.isBlank()) { syncStatus.value = "Add your web app link first"; return@withContext }
+        val badLink = linkProblem(url)
+        if (badLink != null) { syncStatus.value = badLink; return@withContext }
         // Never synced on this phone yet: don't overwrite a sheet that already has data.
         if (!force && loadSnapshot().isEmpty() && sheetHasData(url)) {
             val m = "Your sheet already has data. Tap \"Restore from Sheet\" to load it onto this phone. Nothing was sent."

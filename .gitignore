@@ -1,10 +1,33 @@
+# Build output and IDE files
 *.aab
 *.apk
 *.iml
 .gradle
 .idea
+.kotlin
 /app/build
 /build
+captures/
+*.hprof
+.DS_Store
+
+# Signing keys and credentials - never commit these
 keystore.properties
 local.properties
+secrets.properties
 upload-keystore.jks
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+.env
+.env.*
+google-services.json
+service-account*.json
+client_secret*.json
+
+# Personal data exports (your own backups and CSVs)
+*backup*.json
+*.csv

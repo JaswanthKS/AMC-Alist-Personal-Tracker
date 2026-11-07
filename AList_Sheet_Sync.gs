@@ -3,13 +3,16 @@
 // 2) Deploy > New deployment > type "Web app" > Execute as: Me > Who has access: Anyone > Deploy.
 // 3) Copy the Web app URL into the app (Lists > gear > Google Sheets live sync).
 const SECRET = 'CHANGE-THIS-TO-A-LONG-RANDOM-TEXT';
+const PLACEHOLDER = 'CHANGE-THIS-TO-A-LONG-RANDOM-TEXT'; // leave this line alone: the script refuses to run while SECRET is still this text
 
 function doGet() { return out({ ok: true, hello: 'A-List sync is deployed' }); }
 
 function doPost(e) {
   try {
-    const d = JSON.parse(e.postData.contents);
-    if (d.token !== SECRET) return out({ ok: false, error: 'bad token' });
+    if (SECRET === PLACEHOLDER) return out({ ok: false, error: 'Set a SECRET in the script first' });
+    let d;
+    try { d = JSON.parse(e.postData.contents); } catch (x) { return out({ ok: false, error: 'bad request' }); }
+    if (!d || !safeEqual(String(d.token || ''), SECRET)) return out({ ok: false, error: 'bad token' });
     if (d.action === 'pull') return out(pullData(SpreadsheetApp.getActiveSpreadsheet()));
     if (!d.movies || d.movies.length === 0) return out({ ok: false, error: 'empty' });
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -88,6 +91,13 @@ function ensureHeader(log, col, name, width) {
   cell.setValue(name);
   log.setColumnWidth(col, width);
   return true;
+}
+// Compares two strings without stopping at the first difference.
+function safeEqual(a, b) {
+  let diff = a.length ^ b.length;
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return diff === 0;
 }
 function toDate(s) { return Utilities.parseDate(String(s), SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone(), 'yyyy-MM-dd'); }
 function toTime(s) { if (!s) return ''; const p = String(s).split(':'); return ((+p[0]) * 60 + (+p[1])) / 1440; }
