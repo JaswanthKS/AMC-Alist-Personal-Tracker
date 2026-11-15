@@ -28,6 +28,36 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         .map { list -> list.associate { it.title to (runCatching { org.json.JSONObject(it.json).optInt("runtime", 0) }.getOrDefault(0)) } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    /** title -> runtime, genres, directors and cast from the saved TMDB details (Stats: hours, genres, people). */
+    val infos = dao.allInfo()
+        .map { list -> list.mapNotNull { i -> parseFilmInfo(i.json)?.let { i.title to it } }.toMap() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** (done, total) while details are being looked up for Stats, otherwise null. */
+    val infoProgress = kotlinx.coroutines.flow.MutableStateFlow<Pair<Int, Int>?>(null)
+    private var infoFillStarted = false
+
+    /** Looks up TMDB details for titles that have none yet. Once per app start; never touches posters. */
+    fun fillMissingInfo() {
+        val token = BuildConfig.TMDB_TOKEN
+        if (infoFillStarted || token.isBlank()) return
+        infoFillStarted = true
+        viewModelScope.launch {
+            runCatching {
+                val todo = dao.allMovies().distinctBy { it.title }.filter { dao.info(it.title) == null }
+                todo.forEachIndexed { i, m ->
+                    infoProgress.value = i to todo.size
+                    val json = Posters.details(token, m.title, m.date.take(4).toIntOrNull() ?: 0)
+                    if (json != null) dao.putInfo(MovieInfo(m.title, json, System.currentTimeMillis()))
+                    delay(150)
+                }
+            }
+            infoProgress.value = null
+        }
+    }
+
+    fun checkReleases() = viewModelScope.launch { runCatching { ReleaseReminders.check(getApplication()) } }
+
     val watchlist = dao.watchlist().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     suspend fun searchTmdb(q: String): List<Posters.Hit> {
         val token = BuildConfig.TMDB_TOKEN
@@ -35,6 +65,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
     }
     fun addWatch(h: Posters.Hit) = viewModelScope.launch {
         dao.addWatch(com.alisttracker.data.WatchItem(h.id, h.title, h.release, h.poster, System.currentTimeMillis()))
+        runCatching { ReleaseReminders.check(getApplication()) }
     }
     fun removeWatch(w: com.alisttracker.data.WatchItem) = viewModelScope.launch { dao.deleteWatch(w) }
 
@@ -42,9 +73,17 @@ class MainVM(app: Application) : AndroidViewModel(app) {
 
     init {
         watchForSync()
+        ReleaseReminders.schedule(app)
         viewModelScope.launch {
             seedIfEmpty(app, dao)
             seedOptionsIfEmpty(dao)
+            // One-time: add Japanese to the language list (kept off if you later delete it).
+            val prefs = app.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+            if (!prefs.getBoolean("lang_japanese_added", false)) {
+                dao.addOption(Option(OptType.LANGUAGE, "Japanese", 4))
+                prefs.edit().putBoolean("lang_japanese_added", true).apply()
+            }
+            runCatching { ReleaseReminders.check(app) }
             fetchPosters()
         }
     }
@@ -87,7 +126,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 put("format", m.format); put("threeD", m.threeD); put("language", m.language); put("theater", m.theater)
                 put("screen", m.screen ?: org.json.JSONObject.NULL); put("showtime", m.showtime); put("alist", m.alist)
                 put("notes", m.notes); put("swag", m.swag); put("amc", m.amc); put("posterPath", m.posterPath); put("rating", m.rating)
-                put("concessions", m.concessions); put("concessionsPay", m.concessionsPay)
+                put("concessions", m.concessions); put("concessionsPay", m.concessionsPay); put("concessionItems", m.concessionItems)
             }) } })
         root.put("subs", org.json.JSONArray().also { arr -> subs.value.forEach { s ->
             arr.put(org.json.JSONObject().apply { put("year", s.year); put("month", s.month); put("amount", s.amount) }) } })
@@ -291,7 +330,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
             val keepExtra = dao.allMovies().filter { it.rating > 0 || it.concessions > 0 }.associateBy { keyOf(it) }
             dao.deleteAllMovies(); dao.upsertAll(sheetRows.map { r ->
                 val k = keepExtra[keyOf(r)]
-                if (k == null || (r.amc && sheetHasRating)) r else r.copy(rating = k.rating, concessions = k.concessions, concessionsPay = k.concessionsPay)   // old sheet script: keep what is on the phone
+                if (k == null) r else if (r.amc && sheetHasRating) r.copy(concessionItems = if (kotlin.math.abs(r.concessions - k.concessions) < 0.005) k.concessionItems else "") else r.copy(rating = k.rating, concessions = k.concessions, concessionsPay = k.concessionsPay, concessionItems = k.concessionItems)   // old sheet script: keep what is on the phone
             })
             val ss = root.optJSONArray("subs")
             if (ss != null) {
@@ -314,10 +353,11 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         val toAdd = mutableListOf<Movie>(); val toUpdate = mutableListOf<Movie>(); val toDelete = mutableListOf<Movie>()
         for ((k, sm0) in sheetMap) {
             val am = appMap[k]
-            val sm = if (!sheetHasRating && am != null) sm0.copy(rating = am.rating, concessions = am.concessions, concessionsPay = am.concessionsPay) else sm0
+            val sm = if (!sheetHasRating && am != null) sm0.copy(rating = am.rating, concessions = am.concessions, concessionsPay = am.concessionsPay, concessionItems = am.concessionItems) else sm0
             if (am != null) {
                 if (canon(am) != canon(sm) && snap[k] == canon(am))   // app untouched since last sync -> sheet wins
-                    toUpdate += if (am.amc) sm.copy(id = am.id, posterPath = am.posterPath)
+                    toUpdate += if (am.amc) sm.copy(id = am.id, posterPath = am.posterPath,
+                                    concessionItems = if (kotlin.math.abs(sm.concessions - am.concessions) < 0.005) am.concessionItems else "")
                                 else am.copy(ticket = sm.ticket, fee = 0.0, format = sm.format, threeD = sm.threeD, theater = sm.theater, notes = sm.notes)
             } else if (snap[k] == null && !looksLikeCopy(sm, appAll)) toAdd += sm   // brand new in the sheet
         }
@@ -414,7 +454,8 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 showtime = j.optString("showtime", ""), alist = j.optString("alist", "Yes"),
                 notes = j.optString("notes", ""), swag = j.optString("swag", ""), amc = j.optBoolean("amc", true),
                 posterPath = j.optString("posterPath", ""), rating = j.optInt("rating", 0),
-                concessions = j.optDouble("concessions", 0.0), concessionsPay = j.optString("concessionsPay", ""))
+                concessions = j.optDouble("concessions", 0.0), concessionsPay = j.optString("concessionsPay", ""),
+                concessionItems = j.optString("concessionItems", ""))
         } }
         val ss = root.getJSONArray("subs").let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { SubPayment(it.getInt("year"), it.getInt("month"), it.getDouble("amount")) } }
         val os = root.getJSONArray("options").let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { Option(it.getString("type"), it.getString("value"), it.optInt("sortOrder")) } }

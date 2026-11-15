@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -82,6 +83,8 @@ fun RewindScreen(movies: List<Movie>, subs: List<SubPayment>, vm: MainVM, grad: 
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val layer = rememberGraphicsLayer()
+    var showCard by remember { mutableStateOf(false) }
+    if (showCard) YearCardDialog(year, list, grad.first().toArgb(), grad.last().toArgb()) { showCard = false }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val minBody = maxHeight - 64.dp
@@ -107,6 +110,14 @@ fun RewindScreen(movies: List<Movie>, subs: List<SubPayment>, vm: MainVM, grad: 
                 }
             }
             Spacer(Modifier.width(10.dp))
+            if (yearMode && list.isNotEmpty()) {
+                Text(
+                    "Year card", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF4DB3FF).copy(alpha = 0.9f))
+                        .clickable { showCard = true }.padding(horizontal = 16.dp, vertical = 10.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+            }
             IconButton(
                 onClick = {
                     scope.launch {

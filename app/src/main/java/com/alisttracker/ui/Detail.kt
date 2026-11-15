@@ -190,7 +190,7 @@ fun MovieDetailScreen(m: Movie, vm: MainVM, onBack: () -> Unit, onEdit: () -> Un
                     DetailRow("Total value", money(m.total))
                     DetailRow("A-List", if (m.alist == "No") "Paid" else m.alist, aListColor(m.alist))
                     DetailRow("Swag", m.swag)
-                    if (m.concessions > 0) DetailRow("Concessions", money(m.concessions) + if (m.concessionsPay.isNotBlank()) " · ${m.concessionsPay}" else "")
+                    m.concItems().forEach { DetailRow(it.what.ifBlank { "Concessions" }, money(it.price) + if (it.pay.isNotBlank()) " · ${it.pay}" else "") }
                     DetailRow("Notes", m.notes)
                     if (!m.amc) DetailRow("Counts toward A-List", "No (other theater)")
                 }

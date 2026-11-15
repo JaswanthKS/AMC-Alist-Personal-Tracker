@@ -49,6 +49,18 @@ private fun releaseLine(date: String): Pair<String, Color> {
 fun WatchlistPane(items: List<WatchItem>, vm: MainVM, onLog: (WatchItem) -> Unit) {
     var adding by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<WatchItem?>(null) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var notifOn by remember { mutableStateOf(com.alisttracker.ReleaseReminders.canNotify(ctx)) }
+    var askedOnce by remember { mutableStateOf(false) }
+    val askNotif = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) {
+        notifOn = com.alisttracker.ReleaseReminders.canNotify(ctx)
+        if (notifOn) vm.checkReleases()
+    }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        val now = com.alisttracker.ReleaseReminders.canNotify(ctx)
+        if (now && !notifOn) vm.checkReleases()
+        notifOn = now
+    }
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 110.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -59,6 +71,22 @@ fun WatchlistPane(items: List<WatchItem>, vm: MainVM, onLog: (WatchItem) -> Unit
                 colors = ButtonDefaults.buttonColors(containerColor = Surface1, contentColor = Color.White),
                 shape = RoundedCornerShape(16.dp)
             ) { Icon(Icons.Default.Add, null, tint = Red); Spacer(Modifier.width(6.dp)); Text("Add a movie to watch") }
+        }
+        item {
+            Text(
+                if (notifOn) "Release reminders are on: you get a notification the day before a movie opens and on opening day."
+                else "Tap to turn on release reminders (a notification the day before a movie opens and on opening day).",
+                color = if (notifOn) Muted else Gold, fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = !notifOn) {
+                    if (android.os.Build.VERSION.SDK_INT >= 33 && !askedOnce) {
+                        askedOnce = true
+                        askNotif.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    } else runCatching {
+                        ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName))
+                    }
+                }.padding(horizontal = 4.dp, vertical = 4.dp)
+            )
         }
         if (items.isEmpty()) item {
             Text("Nothing here yet. Add upcoming movies, then tap \"Log visit\" when you go.", color = Muted, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp))

@@ -25,7 +25,8 @@ data class Movie(
     @ColumnInfo(defaultValue = "''") val posterPath: String = "",
     @ColumnInfo(defaultValue = "0") val rating: Int = 0,   // 0 = not rated, 1..5 stars
     @ColumnInfo(defaultValue = "0") val concessions: Double = 0.0,   // popcorn / drinks spend for this visit
-    @ColumnInfo(defaultValue = "''") val concessionsPay: String = ""   // Cash / Credit Card / Rewards / Gift Card / Other
+    @ColumnInfo(defaultValue = "''") val concessionsPay: String = "",   // Cash / Credit Card / Rewards / Gift Card / Voucher / Other, or Mixed
+    @ColumnInfo(defaultValue = "''") val concessionItems: String = ""   // purchases, encoded (see ui/Concessions.kt); concessions = their total
 ) {
     val total: Double get() = ticket + fee
 }
@@ -88,6 +89,9 @@ interface AppDao {
 
     @Query("SELECT * FROM watchlist ORDER BY CASE WHEN releaseDate = '' THEN 1 ELSE 0 END, releaseDate ASC, addedAt DESC")
     fun watchlist(): Flow<List<WatchItem>>
+
+    @Query("SELECT * FROM watchlist")
+    suspend fun allWatch(): List<WatchItem>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addWatch(w: WatchItem)
@@ -153,7 +157,7 @@ interface AppDao {
     suspend fun deleteOption(o: Option)
 }
 
-@Database(entities = [Movie::class, SubPayment::class, Option::class, MovieInfo::class, WatchItem::class], version = 9, exportSchema = false)
+@Database(entities = [Movie::class, SubPayment::class, Option::class, MovieInfo::class, WatchItem::class], version = 10, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): AppDao
 
@@ -161,7 +165,7 @@ abstract class AppDb : RoomDatabase() {
         @Volatile private var inst: AppDb? = null
         fun get(ctx: Context): AppDb = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(ctx.applicationContext, AppDb::class.java, "alist.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .build().also { inst = it }
         }
     }
@@ -182,6 +186,14 @@ val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
 val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
     override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `movie_info` (`title` TEXT NOT NULL, `json` TEXT NOT NULL, `fetchedAt` INTEGER NOT NULL, PRIMARY KEY(`title`))")
+    }
+}
+
+/** Itemised concession purchases. Existing totals become one item each so nothing is lost. */
+val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `movies` ADD COLUMN `concessionItems` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("UPDATE `movies` SET `concessionItems` = 'Concessions' || char(31) || `concessions` || char(31) || `concessionsPay` WHERE `concessions` > 0")
     }
 }
 
@@ -231,7 +243,7 @@ suspend fun seedOptionsIfEmpty(dao: AppDao) {
     dao.addOptions(
         mk(OptType.THEATER, listOf("AMC Empire 25", "AMC Lincoln Square 13", "AMC Newport 11", "AMC 34th Street 14"), movies.map { it.theater }) +
         mk(OptType.FORMAT, listOf("IMAX", "IMAX 70mm", "70mm", "Dolby Cinema", "Prime", "Standard", "XL", "Vistavision"), movies.map { it.format }) +
-        mk(OptType.LANGUAGE, listOf("English", "Telugu", "Tamil", "Hindi"), movies.map { it.language }) +
+        mk(OptType.LANGUAGE, listOf("English", "Telugu", "Tamil", "Hindi", "Japanese"), movies.map { it.language }) +
         mk(OptType.SWAG, listOf("Poster", "Pin", "Collectible Ticket", "Popcorn Bucket", "Key Chain", "Other"), movies.map { it.swag })
     )
 }

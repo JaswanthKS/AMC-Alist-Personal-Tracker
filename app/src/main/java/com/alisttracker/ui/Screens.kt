@@ -213,6 +213,7 @@ fun LogScreen(title: String, subtitle: String, movies: List<Movie>, watch: List<
     val amcCount = movies.count { it.amc }
     val scoped = remember(movies, scope) { movies.filter { it.amc == (scope == 0) } }
     val sorted = remember(scoped) { scoped.latestFirst() }
+    val repeatIds = remember(movies) { rewatchIds(movies) }
     val exactFormat = remember(sorted, query) { sorted.map { it.format }.firstOrNull { it.equals(query.trim(), true) } }
     val formatChoices = remember(sorted) { sorted.groupingBy { it.format.ifBlank { "Standard" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
     val langChoices = remember(sorted) { sorted.groupingBy { it.language.ifBlank { "English" } }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
@@ -274,7 +275,7 @@ fun LogScreen(title: String, subtitle: String, movies: List<Movie>, watch: List<
                         Text("${items.size} movie${if (items.size == 1) "" else "s"}", fontSize = 12.sp, color = Muted)
                     }
                 }
-                items(items, key = { it.id }) { m -> MovieRow(m) { onClick(m) } }
+                items(items, key = { it.id }) { m -> MovieRow(m, m.id in repeatIds) { onClick(m) } }
             }
         }
     }
@@ -288,7 +289,7 @@ fun Chip(text: String, color: Color) {
 }
 
 @Composable
-fun MovieRow(m: Movie, onClick: () -> Unit) {
+fun MovieRow(m: Movie, rewatch: Boolean = false, onClick: () -> Unit) {
     val accent = formatColor(m.format)
     Card(
         onClick = onClick,
@@ -319,6 +320,7 @@ fun MovieRow(m: Movie, onClick: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Chip(m.format.ifBlank { "Standard" }, accent)
                     if (m.threeD) Chip("3D", Color3D)
+                    if (rewatch) Chip("Rewatch", Gold)
                     if (m.language.isNotBlank() && m.language != "English") Chip(m.language, Orange)
                 }
             }
@@ -391,26 +393,7 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
             Tile("Gift card + voucher", "${s.giftCardMovies + s.voucherMovies}", Teal, Modifier.weight(1f))
         }
 
-        val cs = remember(movies) { concessionStats(movies) }
-        if (cs.visits > 0) {
-            Section("Concessions & true cost", Orange) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Tile("Popcorn & drinks", money(cs.total), Orange, Modifier.weight(1f))
-                    Tile("Avg per visit", money(cs.total / cs.visits), Gold, Modifier.weight(1f))
-                }
-                Spacer(Modifier.height(8.dp))
-                cs.byPay.forEach { (k, v) ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-                        Text(k, color = Color.White, modifier = Modifier.weight(1f))
-                        Text(money(v), color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                val trueCost = s.subsPaid + s.outOfPocket + cs.cashOut
-                Text("True total cost: ${money(trueCost)}", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
-                Text("Membership + tickets you paid for + concessions paid with cash or card (rewards and gift cards left out).", color = Muted, fontSize = 12.sp)
-            }
-        }
+        ConcessionsSection(movies)
 
         run {
             val now = LocalDate.now()
@@ -454,6 +437,16 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
             val max = s.byFormat.maxOfOrNull { it.second } ?: 1
             s.byFormat.forEach { BarRow(it.first.ifBlank { "—" }, it.second, max, formatColor(it.first)) }
         }
+        YearSavingsSection(movies, subs)
+        StreaksSection(movies)
+        TheaterStatsSection(movies)
+        LanguageSection(movies)
+        HabitsSection(movies)
+        RecordsSection(movies)
+        YearCompareSection(movies, subs, vm)
+        FilmStatsSection(movies, vm)
+        FormatYearSection(movies, options.filter { it.type == OptType.FORMAT }.map { it.value })
+        MultiMovieDaysSection(movies)
         Section("Average ticket by format", Gold) {
             s.avgTicketByFormat.forEach { (f, avg) ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -645,8 +638,8 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
     var swag by remember { mutableStateOf(initial?.swag ?: "") }
     var amc by remember { mutableStateOf(initial?.amc ?: true) }
     var rating by remember { mutableStateOf(initial?.rating ?: 0) }
-    var concessions by remember { mutableStateOf(initial?.concessions?.takeIf { it > 0 }?.let { String.format(Locale.US, "%.2f", it) } ?: "") }
-    var concPay by remember { mutableStateOf(initial?.concessionsPay ?: "") }
+    val concRows = remember { concRowsFor(initial).toMutableStateList() }
+    var concBought by remember { mutableStateOf(concRows.isNotEmpty()) }
     var showPicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
 
@@ -663,6 +656,16 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(title, { title = it }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                val titleSuggestions = remember(title, existing) {
+                    val q = title.trim()
+                    if (q.length < 2 || q == initial?.title) emptyList() else existing.map { it.title }.distinct()
+                        .filter { it.contains(q, ignoreCase = true) && !it.equals(q, ignoreCase = true) }
+                        .sortedBy { if (it.startsWith(q, ignoreCase = true)) 0 else 1 }.take(4)
+                }
+                titleSuggestions.forEach { sug ->
+                    Text(sug, color = Blue, fontSize = 14.sp, maxLines = 1,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { title = sug }.padding(horizontal = 8.dp, vertical = 6.dp))
+                }
                 OutlinedTextField(date, { date = it }, label = { Text("Date (yyyy-MM-dd)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     trailingIcon = { IconButton({ showPicker = true }) { Icon(Icons.Default.DateRange, "Pick date") } })
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -687,8 +690,7 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
                 }
                 Choice("A-List", alist, listOf("Yes", "No", "Gift Card", "Voucher")) { alist = it }
                 Choice("Swag / freebies", swag, swagOpts) { swag = it }
-                OutlinedTextField(concessions, { concessions = it }, label = { Text("Concessions \$ (popcorn, drinks)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                if ((concessions.toDoubleOrNull() ?: 0.0) > 0) Choice("Paid with", concPay, listOf("Cash", "Credit Card", "Rewards", "Gift Card", "Other")) { concPay = it }
+                ConcessionsEditor(concBought, { concBought = it }, concRows)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Rating", color = Muted, fontSize = 14.sp, modifier = Modifier.width(64.dp))
                     StarRating(rating, size = 30.dp) { rating = it }
@@ -704,14 +706,14 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
             TextButton(onClick = {
                 if (title.isBlank()) return@TextButton
                 runCatching { LocalDate.parse(date) }.getOrNull() ?: return@TextButton
+                val savedConc = if (concBought) concRows.map { it.toItem() }.filter { it.price > 0 } else emptyList()
                 onSave(Movie(
                     id = initial?.id ?: 0, date = date, title = title.trim(),
                     ticket = ticket.toDoubleOrNull() ?: 0.0, fee = fee.toDoubleOrNull() ?: 0.0,
                     format = format, language = language, theater = theater,
                     screen = screen.toIntOrNull(), showtime = showtime, alist = alist, threeD = threeD,
                     notes = notes, swag = swag, amc = amc, rating = rating,
-                    concessions = (concessions.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0),
-                    concessionsPay = if ((concessions.toDoubleOrNull() ?: 0.0) > 0) concPay else "",
+                    concessions = savedConc.sumOf { it.price }, concessionsPay = payLabel(savedConc), concessionItems = encodeConc(savedConc),
                     posterPath = if (initial != null && initial.title == title.trim()) initial.posterPath else ""))
             }) { Text("Save") }
         },
