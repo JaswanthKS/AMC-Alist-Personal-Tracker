@@ -105,6 +105,9 @@ interface AppDao {
     @Query("SELECT COUNT(*) FROM options")
     suspend fun optionCount(): Int
 
+    @Query("SELECT * FROM options ORDER BY type, sortOrder, value")
+    suspend fun allOptions(): List<Option>
+
     @Query("SELECT * FROM movies")
     suspend fun allMovies(): List<Movie>
 

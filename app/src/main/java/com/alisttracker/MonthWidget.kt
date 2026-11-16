@@ -39,7 +39,7 @@ class MonthWidget : AppWidgetProvider() {
                         ms.paidOff -> "Paid off · ${money(ms.net)} ahead"
                         else -> "${money(ms.cost - ms.value)} to cover membership"
                     })
-                    rv.setTextViewText(R.id.w_week, "Last 7 days: ${visitsLast7Days(movies)} of 3")
+                    rv.setTextViewText(R.id.w_week, "Last 7 days: ${visitsLast7Days(movies)} of ${com.alisttracker.data.Billing.WEEKLY_LIMIT}")
                     val open = app.packageManager.getLaunchIntentForPackage(app.packageName)
                     if (open != null) rv.setOnClickPendingIntent(R.id.widget_root,
                         PendingIntent.getActivity(app, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))

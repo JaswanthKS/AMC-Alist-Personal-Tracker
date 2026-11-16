@@ -44,6 +44,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alisttracker.MainVM
+import com.alisttracker.data.Billing
+import com.alisttracker.data.Lists
 import com.alisttracker.data.Movie
 import com.alisttracker.data.OptType
 import com.alisttracker.data.Option
@@ -118,6 +120,7 @@ fun AppRoot(vm: MainVM) {
         val subs by vm.subs.collectAsState()
         val options by vm.options.collectAsState()
         var tab by remember { mutableIntStateOf(0) }
+        var logTap by remember { mutableIntStateOf(0) }
         var editing by remember { mutableStateOf<Movie?>(null) }
         var detailId by remember { mutableStateOf<Long?>(null) }
         var adding by remember { mutableStateOf(false) }
@@ -155,13 +158,19 @@ fun AppRoot(vm: MainVM) {
                 modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(grad)).nestedScroll(scrollWatcher).statusBarsPadding()
             ) {
                 when (tab) {
-                    0 -> LogScreen("Movie Log", "", movies, watchlist, vm, onLogWatch = { logging = it }) { detailId = it.id }
+                    0 -> LogScreen("Movie Log", "", movies, watchlist, vm, onLogWatch = { logging = it }, scrollToTop = logTap) { detailId = it.id }
                     1 -> DashboardScreen(movies, subs, options, vm)
                     2 -> RewindScreen(movies, subs, vm, grad.take(2)) { detailId = it.id }
                     else -> ListsScreen(movies, subs, options, vm) { showSettings = true }
                 }
             }
-            FloatingChrome(nav, tab, tabs, onTab = { tab = it }, onAdd = { adding = true })
+            FloatingChrome(nav, tab, tabs, onTab = {
+                if (it == 0 && tab == 0) {
+                    logTap++
+                    if (vm.syncUrl().isNotBlank()) vm.refreshFromSheet { msg -> android.widget.Toast.makeText(appCtx, msg, android.widget.Toast.LENGTH_SHORT).show() }
+                }
+                tab = it
+            }, onAdd = { adding = true })
 
             val detail = detailId?.let { id -> movies.find { it.id == id } }
             if (detail != null) MovieDetailScreen(
@@ -200,7 +209,9 @@ fun AppRoot(vm: MainVM) {
 }
 
 @Composable
-fun LogScreen(title: String, subtitle: String, movies: List<Movie>, watch: List<com.alisttracker.data.WatchItem>, vm: MainVM, onLogWatch: (com.alisttracker.data.WatchItem) -> Unit, onClick: (Movie) -> Unit) {
+fun LogScreen(title: String, subtitle: String, movies: List<Movie>, watch: List<com.alisttracker.data.WatchItem>, vm: MainVM, onLogWatch: (com.alisttracker.data.WatchItem) -> Unit, scrollToTop: Int = 0, onClick: (Movie) -> Unit) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(scrollToTop) { if (scrollToTop > 0) listState.animateScrollToItem(0) }
     var query by remember { mutableStateOf("") }
     var scope by remember { mutableStateOf(0) }   // 0 = AMC, 1 = other theaters, 2 = watchlist
     var fFormat by remember { mutableStateOf<String?>(null) }
@@ -266,7 +277,7 @@ fun LogScreen(title: String, subtitle: String, movies: List<Movie>, watch: List<
         if (showFilters) FiltersDialog(fRating, yearChoices, fYear, formatChoices, fFormat, f3d, langChoices, fLang, fAlist,
             { fRating = it }, { fYear = it }, { fFormat = it }, { f3d = it }, { fLang = it }, { fAlist = it }, { fFormat = null; fYear = null; f3d = false; fRating = null; fLang = null; fAlist = null }, { showFilters = false })
         if (scope == 2) WatchlistPane(watch, vm, onLogWatch) else
-        LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(state = listState, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             grouped.forEach { (month, items) ->
                 item(key = "h$month") {
                     Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -356,6 +367,7 @@ fun Gauge(progress: Float, top: String, bottom: String, gaugeSize: Dp = 124.dp) 
 @Composable
 fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<Option>, vm: MainVM) {
     var addSub by remember { mutableStateOf(false) }
+    var editPrice by remember { mutableStateOf(false) }
     val s = remember(movies, subs, options) {
         computeStats(movies, subs, options.filter { it.type == OptType.THEATER }.map { it.value }, options.filter { it.type == OptType.FORMAT }.map { it.value })
     }
@@ -413,7 +425,7 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
                     }, color = if (ms.paidOff) Green else Color(0xFFD7D8E6), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 if (total > 0) Text("$won of $total paid months earned back their membership", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
                 val wk = visitsLast7Days(movies)
-                Text("Last 7 days: $wk of 3 A-List movies used", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+                Text("Last 7 days: $wk of ${Billing.WEEKLY_LIMIT} A-List movies used", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
             }
         }
 
@@ -480,8 +492,29 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
                     Text(money(l.sumOf { it.amount }), color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
+            val price by vm.membershipPrice.collectAsState()
+            val now = Billing.priceNow(price, subs)
             Spacer(Modifier.height(6.dp))
-            Button(onClick = { addSub = true }, colors = ButtonDefaults.buttonColors(containerColor = Purple)) { Text("Add / edit payment") }
+            Text("Currently paying ${money(now)} / month", color = Color.White, fontWeight = FontWeight.Bold)
+            Text("Added automatically on the 30th of each month. A new price only changes months not charged yet.", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { editPrice = true }, colors = ButtonDefaults.buttonColors(containerColor = Purple)) { Text("Change price") }
+                OutlinedButton(onClick = { addSub = true }) { Text("Add / edit payment") }
+            }
+            if (editPrice) {
+                var txt by remember { mutableStateOf(String.format(Locale.US, "%.2f", now)) }
+                AlertDialog(
+                    onDismissRequest = { editPrice = false },
+                    title = { Text("Monthly price") },
+                    text = { OutlinedTextField(txt, { txt = it }, label = { Text("Currently paying") }, singleLine = true) },
+                    confirmButton = { TextButton(onClick = {
+                        val v = txt.replace(",", ".").toDoubleOrNull()
+                        if (v != null && v > 0) { vm.setMembershipPrice(v); editPrice = false }
+                    }) { Text("Save") } },
+                    dismissButton = { TextButton(onClick = { editPrice = false }) { Text("Cancel") } }
+                )
+            }
         }
         Spacer(Modifier.height(110.dp))
     }
@@ -538,10 +571,11 @@ fun ListsScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<Optio
             IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
         }
         Text("Add a new theater, format, language or swag item here. It shows up in the movie form and on Stats.", fontSize = 13.sp, color = Muted)
-        OptionSection("Theaters", Red, OptType.THEATER, options, { v -> movies.count { it.theater == v } }, { vm.addOption(OptType.THEATER, it) }) { pendingDelete = it }
-        OptionSection("Formats", Blue, OptType.FORMAT, options, { v -> movies.count { it.format == v } }, { vm.addOption(OptType.FORMAT, it) }) { pendingDelete = it }
-        OptionSection("Languages", Teal, OptType.LANGUAGE, options, { v -> movies.count { it.language == v } }, { vm.addOption(OptType.LANGUAGE, it) }) { pendingDelete = it }
-        OptionSection("Swag / freebies", Gold, OptType.SWAG, options, { v -> movies.count { it.swag == v } }, { vm.addOption(OptType.SWAG, it) }) { pendingDelete = it }
+        // One section per list in data/Lists.kt, so a list added there shows up here by itself.
+        val accents = listOf(Red, Blue, Teal, Gold, Purple, Orange, Green)
+        Lists.kinds.forEachIndexed { i, k ->
+            OptionSection(k.label, accents[i % accents.size], k.type, options, { v -> movies.count { m -> k.get(m) == v } }, { vm.addOption(k.type, it) }) { pendingDelete = it }
+        }
         Section("A-List types", Green) {
             listOf("Yes", "No", "Gift Card", "Voucher").forEach {
                 Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -572,6 +606,7 @@ private fun OptionSection(
 ) {
     val items = options.filter { it.type == type }
     var text by remember { mutableStateOf("") }
+    val ctx = LocalContext.current
     Section(title, accent) {
         items.forEach { o ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -582,12 +617,18 @@ private fun OptionSection(
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
-                text, { text = it }, singleLine = true,
+                text, { text = it.take(Lists.MAX_LEN) }, singleLine = true,
                 placeholder = { Text("Add new…", color = Muted) },
                 modifier = Modifier.weight(1f))
             Spacer(Modifier.width(8.dp))
             Button(
-                onClick = { if (text.isNotBlank()) { onAdd(text.trim()); text = "" } },
+                onClick = {
+                    // same check for every list: tidy the name, refuse blanks and repeats (upper/lower case ignored)
+                    val r = Lists.checkNew(type, text, options)
+                    android.widget.Toast.makeText(ctx, r.message, android.widget.Toast.LENGTH_SHORT).show()
+                    val v = r.value
+                    if (v != null) { onAdd(v); text = "" }
+                },
                 colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black)
             ) { Text("Add") }
         }
@@ -644,7 +685,7 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
     var showTimePicker by remember { mutableStateOf(false) }
 
     fun opt(t: String, extra: List<String>) =
-        (options.filter { it.type == t }.map { it.value } + extra).filter { it.isNotBlank() }.distinct()
+        (options.filter { it.type == t }.map { it.value } + extra).filter { it.isNotBlank() }.distinctBy { it.lowercase() }
     val formats = opt(OptType.FORMAT, existing.map { it.format })
     val languages = opt(OptType.LANGUAGE, existing.map { it.language })
     val theaters = opt(OptType.THEATER, existing.map { it.theater })

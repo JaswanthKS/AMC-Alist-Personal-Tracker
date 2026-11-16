@@ -54,7 +54,7 @@ import java.util.Locale
 @Composable
 fun RewindScreen(movies: List<Movie>, subs: List<SubPayment>, vm: MainVM, grad: List<Color>, onOpen: (Movie) -> Unit) {
     val runtimes by vm.runtimes.collectAsState()
-    val last = remember { LocalDate.now().minusMonths(1) }
+    val last = remember { LocalDate.now() }
     var year by remember { mutableIntStateOf(last.year) }
     var month by remember { mutableIntStateOf(last.monthValue) }
     val years = remember(movies) {

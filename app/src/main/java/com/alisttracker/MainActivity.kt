@@ -84,8 +84,32 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                 prefs.edit().putBoolean("lang_japanese_added", true).apply()
             }
             runCatching { ReleaseReminders.check(app) }
+            autoBill()
             fetchPosters()
         }
+    }
+
+    // ---- automatic monthly membership payment (AMC charges on the 30th) ----
+    private val billPrefs = app.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+    val membershipPrice = kotlinx.coroutines.flow.MutableStateFlow(billPrefs.getFloat("membership_price", 0f).toDouble())
+
+    /** Adds every month that has been charged but is not recorded yet. Never changes a month already recorded. */
+    fun autoBill() = viewModelScope.launch {
+        val have = dao.allSubs()
+        val price = Billing.priceNow(membershipPrice.value, have)
+        val add = Billing.missing(have, price, java.time.LocalDate.now())
+        if (add.isNotEmpty()) { dao.upsertSubs(add); MonthWidget.refresh(getApplication()) }
+    }
+
+    /** New price. Only months that have not been charged yet change; earlier months stay as they were. */
+    fun setMembershipPrice(price: Double) = viewModelScope.launch {
+        if (price <= 0.0) return@launch
+        membershipPrice.value = price
+        billPrefs.edit().putFloat("membership_price", price.toFloat()).apply()
+        val ahead = Billing.futureWithPrice(dao.allSubs(), price, java.time.LocalDate.now())
+        if (ahead.isNotEmpty()) dao.upsertSubs(ahead)
+        autoBill()
+        MonthWidget.refresh(getApplication())
     }
 
     // ---- poster the user picked for a title (kept in settings so refreshes never replace it) ----
@@ -340,6 +364,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
                     .map { SubPayment(it.getInt("year"), it.getInt("month"), it.getDouble("amount")) })
             }
             saveSnapshot(dao.allMovies())
+            absorbLists(root, sheetRows)
             sheetPrefs.edit().putString("sync_status", "Restored ${sheetRows.size} movies from the sheet").apply()
             syncStatus.value = "Restored ${sheetRows.size} movies from the sheet"
             return@withContext "Restored ${sheetRows.size} movies from the sheet"
@@ -384,6 +409,7 @@ class MainVM(app: Application) : AndroidViewModel(app) {
             if (add.isNotEmpty()) dao.upsertSubs(add)
         }
 
+        absorbLists(root, sheetRows)   // new names from the sheet's Lists tab or its rows join the app's lists
         pushToSheet(force = true)   // make the sheet match the merged result and remember it as the new baseline
         val parts = listOfNotNull(
             if (toAdd.isNotEmpty()) "${toAdd.size} added" else null,
@@ -420,6 +446,9 @@ class MainVM(app: Application) : AndroidViewModel(app) {
             }) } })
         root.put("subs", org.json.JSONArray().also { arr -> subs.value.forEach { s ->
             arr.put(org.json.JSONObject().apply { put("year", s.year); put("month", s.month); put("amount", s.amount) }) } })
+        // the lists themselves, so a new theater / format / language also lands on the sheet's Lists tab (dropdowns + Dashboard)
+        val optsNow = dao.allOptions()
+        root.put("lists", org.json.JSONObject().also { o -> Lists.kinds.forEach { k -> o.put(k.type, org.json.JSONArray(Lists.forSheet(k.type, optsNow, all))) } })
         syncStatus.value = "Syncing..."
         val result = runCatching {
             val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
@@ -431,13 +460,13 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         }
         val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.US).format(java.util.Date())
         val msg = result.fold(
-            { body -> if (body.contains("\"ok\":true")) "Synced ${all.size} movies at $time"
+            { body -> if (body.contains("\"ok\":true")) "Synced ${all.size} movies at $time" + listsFullNote(body)
                       else if (body.contains("bad token")) "Wrong secret code"
                       else "Sheet said: " + body.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim().take(160) },
             { "No connection: ${it.message ?: "error"}" })
         syncStatus.value = msg
         sheetPrefs.edit().putString("sync_status", msg).apply()
-        if (msg.startsWith("Synced")) saveSnapshot(all)
+        if (msg.startsWith("Synced")) { saveSnapshot(all); rememberLists() }
     }
 
     /** Replaces everything in the app with the contents of a backup file. Returns the movie count, or -1 if the file is not a backup. */
@@ -492,16 +521,52 @@ class MainVM(app: Application) : AndroidViewModel(app) {
         return json
     }
 
-    fun save(m: Movie) = viewModelScope.launch {
+    fun save(m0: Movie) = viewModelScope.launch {
+        // tidy what was typed and match it to the spelling already in use ("imax" -> "IMAX"), see data/Lists.kt
+        val m = Lists.normalize(m0, dao.allOptions(), dao.allMovies().filter { it.id != m0.id })
         dao.upsert(m)
         MonthWidget.refresh(getApplication())
         // anything newly typed in the form becomes part of the lists
-        listOf(OptType.THEATER to m.theater, OptType.FORMAT to m.format, OptType.LANGUAGE to m.language, OptType.SWAG to m.swag)
-            .filter { it.second.isNotBlank() }
-            .forEach { dao.addOption(Option(it.first, it.second, 999)) }
+        addMissingOptions(listOf(m), emptySet())
         fetchPosters()
     }
-    fun addOption(type: String, value: String) = viewModelScope.launch { dao.addOption(Option(type, value, 999)) }
+    fun addOption(type: String, value: String) = viewModelScope.launch {
+        Lists.checkNew(type, value, dao.allOptions()).value?.let { dao.addOption(Option(type, it, 999)) }
+    }
+
+    // ---------- lists (theaters, formats, languages, swag): one code path for every list, see data/Lists.kt ----------
+    /** Adds list values found on these movies that the lists don't have yet (upper/lower case ignored). */
+    private suspend fun addMissingOptions(ms: List<Movie>, seen: Set<String>) {
+        val opts = dao.allOptions()
+        Lists.kinds.forEach { k -> Lists.newFromSheet(k.type, ms.map { k.get(it) }, opts, seen).forEach { dao.addOption(Option(k.type, it, 999)) } }
+    }
+    /** Every list value this phone has had or has seen in the sheet. Used so that something removed here doesn't come back from the sheet. */
+    private fun seenLists(): Set<String> = sheetPrefs.getStringSet("lists_seen", emptySet())?.toSet() ?: emptySet()
+    private suspend fun rememberLists(extra: Collection<String> = emptyList()) {
+        val s = HashSet(seenLists())
+        dao.allOptions().forEach { s += Lists.seenKey(it.type, it.value) }
+        s += extra
+        sheetPrefs.edit().putStringSet("lists_seen", s).apply()
+    }
+    /** Picks up list values that are new in the sheet (its Lists tab, or typed straight into its rows). */
+    private suspend fun absorbLists(root: org.json.JSONObject, sheetRows: List<Movie>) {
+        val seen = seenLists()
+        val fromSheet = mutableListOf<String>()
+        val tab = root.optJSONObject("lists")
+        Lists.kinds.forEach { k ->
+            val onTab = tab?.optJSONArray(k.type)?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
+            val incoming = onTab + sheetRows.map { k.get(it) }
+            incoming.forEach { if (it.isNotBlank()) fromSheet += Lists.seenKey(k.type, Lists.clean(it)) }
+            Lists.newFromSheet(k.type, incoming, dao.allOptions(), seen).forEach { dao.addOption(Option(k.type, it, 999)) }
+        }
+        rememberLists(fromSheet)
+    }
+    /** Note added to the sync status when the sheet's Lists tab has no free row left for a new name. */
+    private fun listsFullNote(body: String): String {
+        val a = runCatching { org.json.JSONObject(body).optJSONArray("listsFull") }.getOrNull() ?: return ""
+        if (a.length() == 0) return ""
+        return ". The sheet's " + (0 until a.length()).joinToString(", ") { a.optString(it) } + " list is full (rows 2-30), so new names were not added to its Lists tab"
+    }
     fun deleteOption(o: Option) = viewModelScope.launch { dao.deleteOption(o) }
     fun delete(m: Movie) = viewModelScope.launch { dao.delete(m); MonthWidget.refresh(getApplication()) }
     fun saveSub(s: SubPayment) = viewModelScope.launch { dao.upsertSub(s); MonthWidget.refresh(getApplication()) }
@@ -516,6 +581,11 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
         setContent { AppRoot(vm) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        vm.autoBill()
     }
 }
 
