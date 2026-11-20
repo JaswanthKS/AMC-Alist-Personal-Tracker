@@ -28,6 +28,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.launch
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import coil.compose.AsyncImage
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -121,6 +124,7 @@ fun AppRoot(vm: MainVM) {
         val options by vm.options.collectAsState()
         var tab by remember { mutableIntStateOf(0) }
         var logTap by remember { mutableIntStateOf(0) }
+        var statsTap by remember { mutableIntStateOf(0) }
         var editing by remember { mutableStateOf<Movie?>(null) }
         var detailId by remember { mutableStateOf<Long?>(null) }
         var adding by remember { mutableStateOf(false) }
@@ -159,7 +163,7 @@ fun AppRoot(vm: MainVM) {
             ) {
                 when (tab) {
                     0 -> LogScreen("Movie Log", "", movies, watchlist, vm, onLogWatch = { logging = it }, scrollToTop = logTap) { detailId = it.id }
-                    1 -> DashboardScreen(movies, subs, options, vm)
+                    1 -> DashboardScreen(movies, subs, options, vm, scrollToTop = statsTap)
                     2 -> RewindScreen(movies, subs, vm, grad.take(2)) { detailId = it.id }
                     else -> ListsScreen(movies, subs, options, vm) { showSettings = true }
                 }
@@ -169,6 +173,7 @@ fun AppRoot(vm: MainVM) {
                     logTap++
                     if (vm.syncUrl().isNotBlank()) vm.refreshFromSheet { msg -> android.widget.Toast.makeText(appCtx, msg, android.widget.Toast.LENGTH_SHORT).show() }
                 }
+                if (it == 1 && tab == 1) statsTap++
                 tab = it
             }, onAdd = { adding = true })
 
@@ -365,7 +370,11 @@ fun Gauge(progress: Float, top: String, bottom: String, gaugeSize: Dp = 124.dp) 
 }
 
 @Composable
-fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<Option>, vm: MainVM) {
+fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<Option>, vm: MainVM, scrollToTop: Int = 0) {
+    val scroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    val anchors = remember { mutableStateMapOf<String, Int>() }
+    LaunchedEffect(scrollToTop) { if (scrollToTop > 0) scroll.animateScrollTo(0) }
     var addSub by remember { mutableStateOf(false) }
     var editPrice by remember { mutableStateOf(false) }
     val s = remember(movies, subs, options) {
@@ -373,7 +382,18 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
     }
     val multiple = if (s.subsPaid > 0) s.aListValue / s.subsPaid else 0.0
     val savedPct = if (s.aListValue > 0) (s.savings / s.aListValue).toFloat() else 0f
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(Modifier.fillMaxSize()) {
+    val jumps = listOf("Top" to "", "Concessions" to "concessions", "This month" to "month", "Spending" to "spending",
+        "Theaters & formats" to "theaters", "Habits" to "habits", "Films & years" to "films", "Membership" to "membership")
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        jumps.forEach { (label, key) ->
+            Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
+                modifier = Modifier.clip(RoundedCornerShape(50)).background(Surface2)
+                    .clickable { scope.launch { scroll.animateScrollTo(if (key.isEmpty()) 0 else (anchors[key] ?: 0)) } }
+                    .padding(horizontal = 14.dp, vertical = 7.dp))
+        }
+    }
+    Column(Modifier.weight(1f).verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, top = 4.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Your A-List", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
 
         // Hero card with gauge
@@ -405,8 +425,11 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
             Tile("Gift card + voucher", "${s.giftCardMovies + s.voucherMovies}", Teal, Modifier.weight(1f))
         }
 
+        Anchor("concessions", anchors) {
         ConcessionsSection(movies)
 
+        }
+        Anchor("month", anchors) {
         run {
             val now = LocalDate.now()
             val ms = monthSummary(movies, subs, now.year, now.monthValue)
@@ -439,8 +462,12 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
             }
         }
 
+        }
+        Anchor("spending", anchors) {
         SpendingCharts(movies, subs)
-
+        YearSavingsSection(movies, subs)
+        }
+        Anchor("theaters", anchors) {
         Section("Theaters", Red) {
             val max = s.byTheater.maxOfOrNull { it.second } ?: 1
             s.byTheater.forEach { BarRow(it.first.ifBlank { "—" }, it.second, max, Red) }
@@ -449,16 +476,9 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
             val max = s.byFormat.maxOfOrNull { it.second } ?: 1
             s.byFormat.forEach { BarRow(it.first.ifBlank { "—" }, it.second, max, formatColor(it.first)) }
         }
-        YearSavingsSection(movies, subs)
-        StreaksSection(movies)
         TheaterStatsSection(movies)
         LanguageSection(movies)
-        HabitsSection(movies)
-        RecordsSection(movies)
-        YearCompareSection(movies, subs, vm)
-        FilmStatsSection(movies, vm)
         FormatYearSection(movies, options.filter { it.type == OptType.FORMAT }.map { it.value })
-        MultiMovieDaysSection(movies)
         Section("Average ticket by format", Gold) {
             s.avgTicketByFormat.forEach { (f, avg) ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -469,6 +489,11 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
                 }
             }
         }
+        }
+        Anchor("habits", anchors) {
+        StreaksSection(movies)
+        HabitsSection(movies)
+        MultiMovieDaysSection(movies)
         Section("Movies per month", Orange) {
             val months = listOf("J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D")
             Row { Spacer(Modifier.width(44.dp)); months.forEach { Text(it, Modifier.weight(1f), fontSize = 11.sp, color = Muted) } }
@@ -485,6 +510,13 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
                 }
             }
         }
+        }
+        Anchor("films", anchors) {
+        RecordsSection(movies)
+        YearCompareSection(movies, subs, vm)
+        FilmStatsSection(movies, vm)
+        }
+        Anchor("membership", anchors) {
         Section("Membership payments", Purple) {
             subs.groupBy { it.year }.forEach { (y, l) ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
@@ -516,9 +548,17 @@ fun DashboardScreen(movies: List<Movie>, subs: List<SubPayment>, options: List<O
                 )
             }
         }
+        }
         Spacer(Modifier.height(110.dp))
     }
+    }
     if (addSub) SubDialog(onSave = { vm.saveSub(it); addSub = false }, onDismiss = { addSub = false })
+}
+
+/** Wraps a block of stats sections and records where it starts so the jump chips can scroll to it. */
+@Composable
+private fun Anchor(key: String, anchors: MutableMap<String, Int>, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().onGloballyPositioned { anchors[key] = it.positionInParent().y.toInt() }, verticalArrangement = Arrangement.spacedBy(14.dp)) { content() }
 }
 
 @Composable
