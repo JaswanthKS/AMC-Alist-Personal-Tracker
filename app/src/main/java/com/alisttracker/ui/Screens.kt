@@ -187,20 +187,20 @@ fun AppRoot(vm: MainVM) {
             onBack = { showSettings = false })
 
         if (adding) MovieEditor(
-            initial = null, existing = movies, options = options,
+            initial = null, existing = movies, options = options, search = vm::searchTmdb,
             onSave = { vm.save(it); adding = false },
             onDelete = null, onDismiss = { adding = false })
         logging?.let { w ->
             MovieEditor(
                 initial = Movie(date = LocalDate.now().toString(), title = w.title, fee = 2.19, posterPath = w.posterPath,
                     theater = movies.firstOrNull()?.theater ?: ""),
-                existing = movies, options = options,
+                existing = movies, options = options, search = vm::searchTmdb,
                 onSave = { vm.save(it); vm.removeWatch(w); logging = null; tab = 0 },
                 onDelete = null, onDismiss = { logging = null })
         }
         editing?.let { m ->
             MovieEditor(
-                initial = m, existing = movies, options = options,
+                initial = m, existing = movies, options = options, search = vm::searchTmdb,
                 onSave = { vm.save(it); editing = null },
                 onDelete = { vm.delete(m); editing = null },
                 onDismiss = { editing = null })
@@ -663,7 +663,7 @@ fun SubDialog(onSave: (SubPayment) -> Unit, onDismiss: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, onSave: (Movie) -> Unit, onDelete: (() -> Unit)?, onDismiss: () -> Unit) {
+fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, search: suspend (String) -> List<com.alisttracker.data.Posters.Hit> = { emptyList() }, onSave: (Movie) -> Unit, onDelete: (() -> Unit)?, onDismiss: () -> Unit) {
     var date by remember { mutableStateOf(initial?.date ?: LocalDate.now().toString()) }
     var title by remember { mutableStateOf(initial?.title ?: "") }
     var ticket by remember { mutableStateOf(initial?.ticket?.toString() ?: "") }
@@ -681,6 +681,15 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
     var rating by remember { mutableStateOf(initial?.rating ?: 0) }
     val concRows = remember { concRowsFor(initial).toMutableStateList() }
     var concBought by remember { mutableStateOf(concRows.isNotEmpty()) }
+    var pickedTitle by remember { mutableStateOf<String?>(null) }
+    var pickedPoster by remember { mutableStateOf("") }
+    var hits by remember { mutableStateOf<List<com.alisttracker.data.Posters.Hit>>(emptyList()) }
+    LaunchedEffect(title) {
+        val q = title.trim()
+        if (q.length < 2 || q == initial?.title || q == pickedTitle) { hits = emptyList(); return@LaunchedEffect }
+        kotlinx.coroutines.delay(450)
+        hits = search(q)
+    }
     var showPicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
 
@@ -705,7 +714,24 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
                 }
                 titleSuggestions.forEach { sug ->
                     Text(sug, color = Blue, fontSize = 14.sp, maxLines = 1,
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { title = sug }.padding(horizontal = 8.dp, vertical = 6.dp))
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { title = sug; pickedTitle = sug; pickedPoster = ""; hits = emptyList() }.padding(horizontal = 8.dp, vertical = 6.dp))
+                }
+                // every film TMDB knows (same search as the watchlist), below the ones already logged
+                val seenLower = titleSuggestions.map { it.lowercase() }.toSet()
+                hits.filter { it.title.lowercase() !in seenLower && !it.title.equals(title.trim(), ignoreCase = true) }.take(6).forEach { h ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                        .clickable { title = h.title; pickedTitle = h.title; pickedPoster = h.poster; hits = emptyList() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.width(30.dp).height(44.dp).clip(RoundedCornerShape(4.dp)).background(Surface2)) {
+                            if (h.poster.isNotBlank()) AsyncImage("https://image.tmdb.org/t/p/w92${h.poster}", h.title,
+                                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(h.title, fontSize = 14.sp, maxLines = 1)
+                            Text(h.release.take(4).ifBlank { "—" }, fontSize = 12.sp, color = Muted)
+                        }
+                    }
                 }
                 OutlinedTextField(date, { date = it }, label = { Text("Date (yyyy-MM-dd)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     trailingIcon = { IconButton({ showPicker = true }) { Icon(Icons.Default.DateRange, "Pick date") } })
@@ -755,7 +781,7 @@ fun MovieEditor(initial: Movie?, existing: List<Movie>, options: List<Option>, o
                     screen = screen.toIntOrNull(), showtime = showtime, alist = alist, threeD = threeD,
                     notes = notes, swag = swag, amc = amc, rating = rating,
                     concessions = savedConc.sumOf { it.price }, concessionsPay = payLabel(savedConc), concessionItems = encodeConc(savedConc),
-                    posterPath = if (initial != null && initial.title == title.trim()) initial.posterPath else ""))
+                    posterPath = if (initial != null && initial.title == title.trim()) initial.posterPath else if (pickedTitle == title.trim()) pickedPoster else ""))
             }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }

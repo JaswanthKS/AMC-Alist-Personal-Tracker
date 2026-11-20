@@ -142,12 +142,12 @@ private fun drawPosterInto(c: Canvas, poster: Bitmap?, rect: RectF, radius: Floa
 private fun drawClassic(c: Canvas, m: Movie, poster: Bitmap?) {
     val accent = formatColor(m.format).toArgb()
     c.drawColor(0xFF0B0B12.toInt())
-    val card = RectF(40f, 40f, W - 40f, H - 40f)
+    val card = RectF(0f, 0f, W, H)
     val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         shader = LinearGradient(card.left, card.top, card.right, card.bottom,
             intArrayOf(withAlpha(accent, 0.55f), 0xFF241638.toInt(), 0xFF14141F.toInt()), null, Shader.TileMode.CLAMP)
     }
-    c.drawRoundRect(card, 56f, 56f, bg)
+    c.drawRect(card, bg)
 
     val posterW = 400f; val posterH = 600f
     val titleLay = layoutText(m.title, tp(68f, WHITE, true), 880, 2, Layout.Alignment.ALIGN_CENTER)
@@ -232,14 +232,13 @@ private fun drawPaper(c: Canvas, m: Movie, poster: Bitmap?) {
     val faint = 0xFF8A7B60.toInt()
     val outer = 0xFF1B1620.toInt()
     c.drawColor(outer)
-    val paper = RectF(50f, 50f, W - 50f, H - 50f)
+    val paper = RectF(0f, 0f, W, H)
     val paperPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFF4EAD5.toInt() }
-    c.drawRoundRect(paper, 40f, 40f, paperPaint)
+    c.drawRect(paper, paperPaint)
 
     // red header band, clipped to the paper's rounded top
     c.save()
-    c.clipPath(Path().apply { addRoundRect(paper, 40f, 40f, Path.Direction.CW) })
-    c.drawRect(paper.left, paper.top, paper.right, paper.top + 170f, Paint().apply { color = 0xFFC21F3A.toInt() })
+        c.drawRect(paper.left, paper.top, paper.right, paper.top + 220f, Paint().apply { color = 0xFFC21F3A.toInt() })
     c.restore()
     val serifBold = Typeface.create(Typeface.SERIF, Typeface.BOLD)
     val mono = Typeface.MONOSPACE
@@ -287,7 +286,7 @@ private fun drawPaper(c: Canvas, m: Movie, poster: Bitmap?) {
         style = Paint.Style.STROKE; strokeWidth = 5f; color = 0xFF9C8F76.toInt(); pathEffect = DashPathEffect(floatArrayOf(20f, 14f), 0f)
     }
     c.drawLine(paper.left + 50f, perfY, paper.right - 50f, perfY, dash)
-    val notch = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = outer }
+    val notch = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFE3D5B5.toInt() }
     c.drawCircle(paper.left, perfY, 36f, notch)
     c.drawCircle(paper.right, perfY, 36f, notch)
 
