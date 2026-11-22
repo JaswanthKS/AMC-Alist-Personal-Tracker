@@ -4,7 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -167,6 +171,7 @@ fun TheaterStatsSection(movies: List<Movie>) {
     }
     if (theaters.isEmpty()) return
     var picked by rememberSaveable { mutableStateOf("") }
+    var openScreen by remember { mutableStateOf<Int?>(null) }
     val sel = if (theaters.any { it.first == picked }) picked else theaters.first().first
     val list = remember(movies, sel) { movies.filter { it.theater == sel }.sortedBy { it.date } }
     val formats = remember(list) { list.groupBy { it.format.ifBlank { "Standard" } }.map { it.key to it.value.size }.sortedByDescending { it.second } }
@@ -207,6 +212,7 @@ fun TheaterStatsSection(movies: List<Movie>) {
                         Column(
                             Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
                                 .background(if (c > 0) androidx.compose.ui.graphics.lerp(Color(0xFF1E3A5F), Blue, c.toFloat() / smax) else Surface2)
+                                .clickable(enabled = c > 0) { openScreen = n }
                                 .padding(vertical = 8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
@@ -229,6 +235,24 @@ fun TheaterStatsSection(movies: List<Movie>) {
             Text("By year", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             val ymax = years.maxOf { it.second }
             years.forEach { BarRow(it.first, it.second, ymax, Orange) }
+        }
+        openScreen?.let { n ->
+            val seen = list.filter { it.screen == n }.sortedByDescending { it.date }
+            AlertDialog(
+                onDismissRequest = { openScreen = null },
+                title = { Text("Screen $n · ${seen.size} visit${if (seen.size == 1) "" else "s"}") },
+                text = {
+                    LazyColumn {
+                        items(seen, key = { it.id }) { m ->
+                            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(nice(m.date), color = Muted, fontSize = 13.sp, modifier = Modifier.width(96.dp))
+                                Text(m.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { openScreen = null }) { Text("Close") } }
+            )
         }
     }
 }
