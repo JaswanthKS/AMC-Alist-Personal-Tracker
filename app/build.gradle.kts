@@ -25,8 +25,8 @@ android {
         applicationId = "com.alisttracker"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 9
+        versionName = "1.0.8"
         buildConfigField("String", "TMDB_TOKEN", "\"${localProps.getProperty("TMDB_TOKEN", "")}\"")
     }
     signingConfigs {
